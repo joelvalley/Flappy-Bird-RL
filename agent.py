@@ -5,9 +5,11 @@ import random
 import argparse
 import itertools
 import gymnasium
+import numpy as np
 from dqn import DQN
 from torch import nn
 import flappy_bird_gymnasium
+import matplotlib.pyplot as plt
 from datetime import datetime, timedelta
 from experience_replay import ReplayMemory
 
@@ -19,6 +21,9 @@ os.makedirs(RUNS_DIR, exist_ok=True)
 
 # Device agnostic code
 device = "mps" if torch.backends.mps.is_available() else "cpu"
+device = "cpu"
+
+print(f"Using device: {device}")
 
 class Agent:
   def __init__(self, hyperparameter_set):
@@ -43,6 +48,7 @@ class Agent:
 
     self.LOG_FILE = os.path.join(RUNS_DIR, f"{hyperparameter_set}.log")
     self.MODEL_FILE = os.path.join(RUNS_DIR, f"{hyperparameter_set}.pt")
+    self.GRAPH_FILE = os.path.join(RUNS_DIR, f"{hyperparameter_set}.png")
 
 
   def run(self, is_training=True, render=False):
@@ -75,6 +81,9 @@ class Agent:
        epsilon_history = []
 
        best_reward = -99999999
+
+       last_graph_update = datetime.now()
+
     else:
       policy_dqn.load_state_dict(torch.load(self.MODEL_FILE))
 
@@ -123,11 +132,17 @@ class Agent:
         if episode_reward > best_reward:
           log_message = f"{datetime.now().strftime(DATE_FORMAT)} - New best reward: {episode_reward} in episode {episode}"
           print(log_message)
+
           with open(self.LOG_FILE, 'a') as file:
             file.write(log_message + "\n")
 
           torch.save(policy_dqn.state_dict(), self.MODEL_FILE)
           best_reward = episode_reward
+
+          current_time = datetime.now()
+          if current_time - last_graph_update > timedelta(seconds=10):
+            self.save_graph(rewards_per_episode, epsilon_history)
+            last_graph_update = current_time
 
       # Epsilon greedy
       epsilon = max(epsilon * self.epsilon_decay, self.epsilon_min)
@@ -142,6 +157,28 @@ class Agent:
         if step_count > self.network_sync_rate:
           target_dqn.load_state_dict(policy_dqn.state_dict())
           step_count = 0
+
+  def save_graph(self, rewards_per_episode, epsilon_history):
+    mean_rewards = np.zeros(len(rewards_per_episode))
+    for x in range(len(mean_rewards)):
+        mean_rewards[x] = np.mean(rewards_per_episode[max(0, x-99):(x+1)])
+
+    plt.figure(1)
+    plt.title('Training Progress')
+    plt.subplot(121)
+    plt.xlabel('Episode')
+    plt.ylabel('Mean Rewards')
+    plt.plot(mean_rewards, color='r')
+    plt.grid(True)
+
+    plt.subplot(122)
+    plt.xlabel('Episode')
+    plt.ylabel('Epsilon')
+    plt.plot(epsilon_history, color='g')
+    plt.grid(True)
+
+    plt.savefig(self.GRAPH_FILE)
+    plt.close()
 
   def optimize(self, mini_batch, policy_dqn, target_dqn):
     states, actions, new_states, rewards, terminations = zip(*mini_batch)
